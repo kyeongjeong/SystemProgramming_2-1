@@ -25,17 +25,18 @@
 #include <fnmatch.h>
 #define MAX_LENGTH 1000
 
-void listDirFiles(int a_hidden, int l_format, int S_size, int r_reverse, int h_readable, char* filename);
-void printFileInfo(char* fileName, int l_format, int h_readable);
+void listDirFiles(int a_hidden, int l_format, int S_size, int r_reverse, int h_readable, char* filename, FILE *file);
+void printFileInfo(char* fileName, FILE *file, int l_format, int h_readable);
 void getAbsolutePath(char *inputPath, char *absolutePath);
 void joinPathAndFileName(char* path, char* Apath, char* fileName);
 void sortByNameInAscii(char **fileList, int fileNum, int start, int r_reverse);
 void sortByFileSize(char **fileList, char * dirPath, int fileNum, int start, int r_reverse);
-void printPermissions(mode_t mode);
-void printType(struct stat fileStat);
-void printAttributes(struct stat fileStat, int h_readable);
+void printPermissions(mode_t mode, FILE *file);
+void printType(struct stat fileStat, FILE *file);
+void findColor(struct stat fileStat, char* color);
+void printAttributes(struct stat fileStat, FILE *file, int h_readable, char *color);
 int compareStringUpper(char* fileName1, char* fileName2);
-int wildcard(char* fileName, int isPrint);
+int wildcard(FILE *file, char* patternName, int isPrint);
 
 ///////////////////////////////////////////////////////////////////////////////////////
 // main                                                                              //
@@ -53,6 +54,7 @@ int main(int argc, char* argv[]) {
     DIR *dirp;
     struct dirent *dir;
     struct stat st;
+    FILE *file = fopen("2021202078_html_ls.html", "w");
     int a_hidden = 0; //옵션에 -a 포함 여부(0: 미포함, 1: 포함)
     int l_format = 0; //옵션에 -l 포함 여부(0: 미포함, 1: 포함)
     int S_size = 0; //옵션에 -S 포함 여부(0: 미포함, 1: 포함)
@@ -61,6 +63,12 @@ int main(int argc, char* argv[]) {
     int opt; //옵션 정보
     int isNotWild[MAX_LENGTH] = {0, }; //와일드카드 포함 여부(0: 포함, 1: 미포함)
     int sortflag = 0; //정렬 교정을 위한 임시 변수
+    char Apath[MAX_LENGTH] = {'\0', };
+    char title[MAX_LENGTH] = "2021202078_html_ls.html";
+
+    fprintf(file, "<!DOCTYPE html>\n<html>\n<head>\n");
+    getAbsolutePath(title, Apath);
+    fprintf(file, "<title>%s</title>\n</head>\n<body>\n", Apath);
 
     while((opt = getopt(argc, argv, "alhSr")) != -1) { //옵션 정보 판별하기
         switch (opt)
@@ -92,9 +100,14 @@ int main(int argc, char* argv[]) {
     if(optind >= 2) //-al, -la의 경우에도 optind는 1
         optind = 1;
 
+    fprintf(file, "<h1>\n");
+    for(int i = 0; i < argc; i++)
+        fprintf(file, "%s ", argv[i]);
+    fprintf(file, "\n</h1>\n<br>\n");
+
     if((argc-optind) == 1) { //인자가 없는 경우(옵션은 있을수도, 없을수도 있다)
         char currentPath[10] = "."; //현재 경로
-        listDirFiles(a_hidden, l_format, S_size, r_reverse, h_readable, currentPath); //현재 디렉토리 하위 파일 출력
+        listDirFiles(a_hidden, l_format, S_size, r_reverse, h_readable, currentPath, file); //현재 디렉토리 하위 파일 출력
     }
 
     else {
@@ -102,8 +115,8 @@ int main(int argc, char* argv[]) {
         for(int i = optind; i < argc; i++) { //1. 디렉토리가 아님 2. 파일 안열림 3. 옵션이 아님 => 다 합하면 존재하지 않는 파일만 추출가능
             if ((opendir(argv[i]) == NULL) && (stat(argv[i], &st)==-1) && (argv[i][0] != '-')) { 
                 
-                if(wildcard(argv[i], 0) == 0) {
-                    printf("cannot access %s: No such file or directory\n", argv[i]); //error 문구 출력
+                if(wildcard(file, argv[i], 0) == 0) {
+                    fprintf(file, "<b>cannot access %s: No such file or directory</b><br>\n", argv[i]); //error 문구 출력
                     isNotWild[i] = 1;
                 }
                 else
@@ -111,12 +124,14 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        fprintf(file, "<br>\n");
+
         sortByNameInAscii(argv, argc, (optind + sortflag), r_reverse);
 
         for (int i = optind; i < argc; i++) {
             if ((opendir(argv[i]) == NULL) && (stat(argv[i], &st) == -1) && (argv[i][0] != '-')) {
                 if (isNotWild[i] == 0)
-                    wildcard(argv[i], 1);
+                    wildcard(file, argv[i], 1);
                 else
                     continue;
             }
@@ -134,33 +149,47 @@ int main(int argc, char* argv[]) {
 
             for (int i = optind; i < argc; i++) { // 1. 존재하는 파일임(옵션 x) 2. 디렉토리가 아님 3. run파일이 아님 => 파일정보 출력
                 
-                if ((stat(temp[i], &st) != -1) && (!S_ISDIR(st.st_mode)) && (i != 0))
-                    printFileInfo(temp[i], l_format, h_readable); //파일 정보 출력 함수
+                if ((stat(temp[i], &st) != -1) && (!S_ISDIR(st.st_mode)) && (i != 0)) 
+                    printFileInfo(temp[i], file, l_format, h_readable); //파일 정보 출력 함수
             }
         }
 
         else{
+
+            fprintf(file, "<table border=\"1\">\n<tr>\n<th>Name</th>\n");
+            if (l_format == 1) {
+                fprintf(file, "<th>Permissions</th>\n");
+                fprintf(file, "<th>Link</th>\n");
+                fprintf(file, "<th>Owner</th>\n");
+                fprintf(file, "<th>Group</th>\n");
+                fprintf(file, "<th>Size</th>\n");
+                fprintf(file, "<th>Last Modified</th>\n</tr>");
+            }
+            else
+                fprintf(file, "</tr>");
+            
             for (int i = optind; i < argc; i++) { // 1. 존재하는 파일임(옵션 x) 2. 디렉토리가 아님 3. run파일이 아님 => 파일정보 출력
                 if ((stat(argv[i], &st) != -1) && (!S_ISDIR(st.st_mode)) && (i != 0)) {
-                    printFileInfo(argv[i], l_format, h_readable); // 파일정보 출력                
+                    printFileInfo(argv[i], file, l_format, h_readable); // 파일정보 출력                
                 } 
             }
+            fprintf(file, "</table><br>\n");
         }
 
         for(int i = optind; i < argc; i++) { //인자 수만큼 반복
             if((stat(argv[i], &st) != -1) && S_ISDIR(st.st_mode)) { //열리는 디렉토리인 경우
                 
-                if((argc - optind > 1) && (l_format == 0)) //-l 옵션이 없고 인자로 받은 경로가 2개 이상일 경우
-                    printf("%s:\n", argv[i]); //ex) a:~~~ b:~~~
+                // if((argc - optind > 1) && (l_format == 0)) //-l 옵션이 없고 인자로 받은 경로가 2개 이상일 경우
+                //     fprintf(file, "%s:\n", argv[i]); //ex) a:~~~ b:~~~
 
-                listDirFiles(a_hidden, l_format, S_size, r_reverse, h_readable, argv[i]); //디렉토리 하위 파일정보 출력
+                listDirFiles(a_hidden, l_format, S_size, r_reverse, h_readable, argv[i], file); //디렉토리 하위 파일정보 출력
                 if(l_format == 0) //-l 옵션이 없는 경우
-                    printf("\n"); //입력받은 경로 간 줄바꿈 
-                    
+                    fprintf(file, "<br>\n"); //입력받은 경로 간 줄바꿈                    
             }
         }
     }
 
+    fprintf(file, "</body></html>");
     closedir; //디렉토리 close
     return 0; //프로그램 종료
 }
@@ -175,10 +204,11 @@ int main(int argc, char* argv[]) {
 // purpose: Prints sub-files in the directory specified by the filename argument     //
 //          based on the options                                                     //
 ///////////////////////////////////////////////////////////////////////////////////////
-int wildcard(char* patternName, int isPrint) {
+int wildcard(FILE *file, char* patternName, int isPrint) {
     
     DIR *dirp;
     struct dirent *dir;
+    struct stat fileStat;
     int wildFlag = 0, fileNum = 0, dirNum = 0; //와일드카드의 유무, 파일 개수, 디렉토리 개수
     char *fileList[MAX_LENGTH]; //파일 리스트
     char *dirList[MAX_LENGTH]; //디렉토리 리스트
@@ -208,16 +238,11 @@ int wildcard(char* patternName, int isPrint) {
     while ((dir = readdir(dirp)) != NULL) { //파일 읽어오기 
 
         char fileName[MAX_LENGTH] = {'\0', }; //파일이름 받아올 배열 선언 및 초기화
-        strcpy(fileName, wildPath2); //입력받은 경로 불러오기
-        strcat(fileName, "/"); // /를 붙이고
-        strcat(fileName, dir->d_name); //읽어온 파일명 붙이기
+        joinPathAndFileName(fileName, wildPath2, dir->d_name);
 
-        if((strcmp(wildPath, wildPath2) == 0) && (strstr(patternName, wildPath2) == NULL)) {
-            
-            strcpy(pat, wildPath2);
-            strcat(pat, "/");
-            strcat(pat, patternName);
-        }
+        if((strcmp(wildPath, wildPath2) == 0) && (strstr(patternName, wildPath2) == NULL)) 
+            joinPathAndFileName(pat, wildPath2, patternName);
+        
         else
             strcpy(pat, patternName);
 
@@ -235,23 +260,36 @@ int wildcard(char* patternName, int isPrint) {
     }
 
     if(wildFlag == 0) //만약 와일드카드가 아니라면
-        return wildFlag; //0을 반환
+        return wildFlag; //0을 반환    
 
     if (isPrint == 1) { //출력이 필요한 경우
+
         sortByNameInAscii(fileList, fileNum, 0, 0); //아스키코드순으로 파일 정렬
         sortByNameInAscii(dirList, dirNum, 0, 0); //아스키코드순으로 디렉토리 정렬
 
         rewinddir(dirp); //dirp를 초기화
-        for (int i = 0; i < fileNum; i++) //파일리스트만큼 반복하면서
-            printf("%s\n", fileList[i]); //파일명 출력
+        if(fileNum != 0) {
+            fprintf(file, "<table border=\"1\">\n<tr>\n<th>Name</th>\n</tr>\n");
+            fprintf(file, "<b>Directory path: %s<b>\n", wildPath);
+        }
+
+        for (int i = 0; i < fileNum; i++) {//파일리스트만큼 반복하면서 
+
+            char filePath[MAX_LENGTH];
+            joinPathAndFileName(filePath, wildPath, fileList[i]);
+            stat(filePath, &fileStat);
+            char color[20];
+            findColor(fileStat, color);
+
+            fprintf(file, "<tr style=\"%s\"><td><a href=%s>%s</a></td></tr>\n", color, filePath, fileList[i]); //파일명 출력
+        }
+        fprintf(file, "</table>\n<br>\n");
 
         for (int i = 0; i < dirNum; i++) { //디렉토리 개수만큼 반복
 
             char dirPath[MAX_LENGTH]; //디렉토리 경로 저장 변수 선언 및 초기화
-            strcpy(dirPath, wildPath); //절대경로를 복사
-            strcat(dirPath, "/"); //경로에 / 붙이기
-            strcat(dirPath, dirList[i]); //경로에 파일명 붙이기
-            printf("Directory path: %s\n", dirPath);
+            joinPathAndFileName(dirPath, wildPath, dirList[i]);
+            fprintf(file, "<b>Directory path: %s<b>\n", dirPath);
 
             dirp = opendir(dirPath); //dirPath로 open
             int dirNum2 = 0; //디렉토리 하위 파일들의 개수
@@ -262,32 +300,19 @@ int wildcard(char* patternName, int isPrint) {
                     dirNum2++; //하위 파일들의 개수 세기
                 }
             }
+
             sortByNameInAscii(dirList2, dirNum2, 0, 0); //하위 파일들도 아스키코드 순으로 정렬
-            for (int j = 0; j < dirNum2; j++) //파일 개수만큼 반복하면서
-                printf("%s\n", dirList2[j]); //파일명 출력
+            fprintf(file, "<table border=\"1\">\n<tr>\n<th>Name</th>\n</tr>\n");
+            for (int j = 0; j < dirNum2; j++) { //파일 개수만큼 반복하면서
+                
+                char fileLink[MAX_LENGTH] = {'\0'};
+                joinPathAndFileName(fileLink, dirPath, dirList2[j]); 
+                fprintf(file, "<tr><td><a href=%s>%s</a></td></tr>\n", fileLink, dirList2[j]); //파일명 출력
+            }
+            fprintf(file, "</table>\n<br>\n");
         }
     }
     return wildFlag; //와일드카드 여부 반환
-}
-
-void getAbsolutePath(char *inputPath, char *absolutePath) {
-
-    getcwd(absolutePath, MAX_LENGTH); //현재 경로 받아옴
-
-    if(inputPath[0] != '/') //입력이 절대경로가 아닌 파일이고, /로 시작하지 않을 때 ex) A/*
-        strcat(absolutePath, "/"); // /을 제일 앞에 붙여줌
-    
-    if(strstr(inputPath, absolutePath) != NULL) //입력받은 경로가 현재 경로를 포함할 때 ex)/home/Assignment/A/*
-        strcpy(absolutePath, inputPath); //입력받은 경로로 절대경로 덮어쓰기
-    else
-        strcat(absolutePath, inputPath); //현재 경로에 입력받은 경로 이어붙이기
-}
-
-void joinPathAndFileName(char* path, char* Apath, char* fileName) {
-
-    strcpy(path, Apath);
-    strcat(path, "/");
-    strcat(path, fileName);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -300,7 +325,7 @@ void joinPathAndFileName(char* path, char* Apath, char* fileName) {
 // purpose: Prints sub-files in the directory specified by the filename argument     //
 //          based on the options                                                     //
 ///////////////////////////////////////////////////////////////////////////////////////
-void listDirFiles(int a_hidden, int l_format, int S_size, int r_reverse, int h_readable, char* filename) {
+void listDirFiles(int a_hidden, int l_format, int S_size, int r_reverse, int h_readable, char* filename, FILE *file) {
 
     DIR *dirp;
     struct dirent *dir;
@@ -319,10 +344,9 @@ void listDirFiles(int a_hidden, int l_format, int S_size, int r_reverse, int h_r
 
     while((dir = readdir(dirp)) != NULL) { //디렉토리 하위 파일들을 읽어들임
 
-        strcpy(accessFilename, dirPath); //현재 파일 경로 복사
-        strcat(accessFilename, "/");
-        strcat(accessFilename, dir->d_name); //파일의 절대 경로 받아옴
+        joinPathAndFileName(accessFilename, dirPath, dir->d_name);
         stat(accessFilename, &st); //파일의 절대 경로로 stat() 호출
+
         if(a_hidden == 1 || dir->d_name[0] != '.')
             total += st.st_blocks; //옵션(-a)에 따라 total 계산
                 
@@ -344,30 +368,45 @@ void listDirFiles(int a_hidden, int l_format, int S_size, int r_reverse, int h_r
         sortByFileSize(fileList, dirPath, fileNum, 0, r_reverse); //파일 사이즈로 재정렬
     else
         sortByNameInAscii(fileList, fileNum, 0, r_reverse); //fileList를 알파벳 순으로 sort(대소문자 구분 x)
-    
-    if(l_format == 1) { //옵션 -l이 포함된 경우
-        
-        printf("Directory path: %s\n", dirPath);
-        printf("total : %d\n", (int)(total/2));
-    }
 
+    fprintf(file, "<b>Directory path: %s</b><br>\n", dirPath);
+    
+    if(l_format == 1) //옵션 -l이 포함된 경우
+        fprintf(file, "<b>total : %d</b>\n", (int)(total/2));
+
+    fprintf(file, "<table border=\"1\">\n<tr>\n<th>Name</th>\n");
+    if(l_format == 1) {
+        fprintf(file, "<th>Permissions</th>\n");
+        fprintf(file, "<th>Link</th>\n");
+        fprintf(file, "<th>Owner</th>\n");
+        fprintf(file, "<th>Group</th>\n");
+        fprintf(file, "<th>Size</th>\n");
+        fprintf(file, "<th>Last Modified</th>\n</tr>");
+    }
+    else
+        fprintf(file, "</tr>");
+    
     for(int i = 0; i < fileNum; i++) { //파일 개수만큼 반복
 
-        if(l_format == 1) { //옵션 -l이 포함된 경우
+        if((a_hidden == 0) && fileList[i][0] == '.') //옵션 -a 여부에 따라 파일속성 출력
+            continue;
 
-            if((a_hidden == 0) && fileList[i][0] == '.') //옵션 -a 여부에 따라 파일속성 출력
-                continue;
+        joinPathAndFileName(accessPath, dirPath, fileList[i]);
+        stat(accessPath, &fileStat); // 파일 속성정보 불러옴
 
-            strcpy(accessPath, dirPath); //현재 경로 받아옴
-            strcat(accessPath, "/");
-            strcat(accessPath, fileList[i]); //파일의 절대 경로 받아옴
-            stat(accessPath, &fileStat); //파일 속성정보 불러옴
-            printAttributes(fileStat, h_readable); //속성 정보 출력
-        }
+        char color[20] = {'\0', };
+        findColor(fileStat, color);
 
-        if(a_hidden == 1 || fileList[i][0] != '.') //옵션 -a 여부에 따라 파일명 출력
-            printf("%s\n", fileList[i]);
+        fprintf(file, "<tr style=\"%s\">\n", color);
+        fprintf(file, "<td><a href=%s>%s</a></td>", accessPath, fileList[i]);
+
+        if(l_format == 1) //옵션 -l이 포함된 경우
+            printAttributes(fileStat, file, h_readable, color); //속성 정보 출력       
+
+        else
+            fprintf(file, "</tr>");
     }
+    fprintf(file, "</table>\n<br>\n");
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -379,7 +418,7 @@ void listDirFiles(int a_hidden, int l_format, int S_size, int r_reverse, int h_r
 // purpose: Prints the attributes of the file based on the presence or absence of    //
 //          the -l option, given the filename argument.                              //
 ///////////////////////////////////////////////////////////////////////////////////////
-void printFileInfo(char* fileName, int l_format, int h_readable) {
+void printFileInfo(char* fileName, FILE *file, int l_format, int h_readable) {
     
     struct stat fileStat; //파일 속성정보 받아올 변수
     char timeBuf[80]; //파일 시간정보 받아올 변수
@@ -388,10 +427,36 @@ void printFileInfo(char* fileName, int l_format, int h_readable) {
     realpath(fileName, filePath); //파일의 path 불러오기
     stat(filePath, &fileStat); //절대경로로 파일 속성 받기
 
-    if(l_format == 1) //옵션 -l이 포함된 경우 파일 속성 출력
-        printAttributes(fileStat, h_readable);
+    char color[20] = {'\0', };
+    findColor(fileStat, color);
 
-    printf("%s\n", fileName); //옵션 -l이 포함되지 않는 경우 파일명만 출력
+    fprintf(file, "<tr style=\"%s\">\n", color);
+    fprintf(file, "<td><a href=%s>%s</a></td>", filePath, fileName);
+
+    if(l_format == 1) //옵션 -l이 포함된 경우 파일 속성 출력
+        printAttributes(fileStat, file, h_readable, color);
+    else
+        fprintf(file, "</tr>\n");
+}
+
+void getAbsolutePath(char *inputPath, char *absolutePath) {
+
+    getcwd(absolutePath, MAX_LENGTH); //현재 경로 받아옴
+
+    if(inputPath[0] != '/') //입력이 절대경로가 아닌 파일이고, /로 시작하지 않을 때 ex) A/*
+        strcat(absolutePath, "/"); // /을 제일 앞에 붙여줌
+    
+    if(strstr(inputPath, absolutePath) != NULL) //입력받은 경로가 현재 경로를 포함할 때 ex)/home/Assignment/A/*
+        strcpy(absolutePath, inputPath); //입력받은 경로로 절대경로 덮어쓰기
+    else
+        strcat(absolutePath, inputPath); //현재 경로에 입력받은 경로 이어붙이기
+}
+
+void joinPathAndFileName(char* path, char* Apath, char* fileName) {
+
+    strcpy(path, Apath); //입력받은 경로 불러오기
+    strcat(path, "/"); // /를 붙이고
+    strcat(path, fileName); //읽어온 파일명 붙이기
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -403,14 +468,14 @@ void printFileInfo(char* fileName, int l_format, int h_readable) {
 // purpose: Prints the attributes of the file using the information from the given   //
 //          name of struct stat object                                               //
 ///////////////////////////////////////////////////////////////////////////////////////
-void printAttributes(struct stat fileStat, int h_readable) {
+void printAttributes(struct stat fileStat, FILE* file, int h_readable, char *color) {
     
     char timeBuf[80]; //시간 정보 받아올 변수
 
-    printType(fileStat); // 파일 유형
-    printPermissions(fileStat.st_mode); // 허가권
-    printf("\t%ld\t", fileStat.st_nlink); // 링크 수
-    printf("%s\t%s\t", getpwuid(fileStat.st_uid)->pw_name, getgrgid(fileStat.st_gid)->gr_name); // 파일 소유자 및 파일 소유 그룹
+    printType(fileStat, file); // 파일 유형
+    printPermissions(fileStat.st_mode, file); // 허가권
+    fprintf(file, "<td>%ld</td>", fileStat.st_nlink); // 링크 수
+    fprintf(file, "<td>%s</td><td>%s</td>", getpwuid(fileStat.st_uid)->pw_name, getgrgid(fileStat.st_gid)->gr_name); // 파일 소유자 및 파일 소유 그룹
 
     if(h_readable == 1) { //만약 h 속성이 존재한다면
         
@@ -427,15 +492,17 @@ void printAttributes(struct stat fileStat, int h_readable) {
         }
 
         if(unit == 1) //단위를 붙여야 한다면
-            printf("%.1f%c\t", size, sizeUnit[unitIndex]); //소수점 아래 한 자리까지 출력
+            fprintf(file, "<td>%.1f%c</td>", size, sizeUnit[unitIndex]); //소수점 아래 한 자리까지 출력
         else //안붙여도 될 정도로 작다면
-            printf("%.0f\t", size); //소수점 버리고 출력
+            fprintf(file, "<td>%.0f</td>", size); //소수점 버리고 출력
     }
     else
-        printf("%ld\t", fileStat.st_size); // 파일 사이즈
+        fprintf(file, "<td>%ld</td>", fileStat.st_size); // 파일 사이즈
 
     strftime(timeBuf, sizeof(timeBuf), "%b %d %H:%M", localtime(&fileStat.st_mtime)); // 수정된 날짜 및 시간 불러오기
-    printf("%s\t", timeBuf); // 수정된 날짜 및 시간 출력
+    fprintf(file, "<td>%s</td>", timeBuf); // 수정된 날짜 및 시간 출력
+
+    fprintf(file, "</tr>\n");
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -502,16 +569,11 @@ void sortByFileSize(char **fileList, char *dirPath, int fileNum, int start, int 
         for (int j = i + 1; j < fileNum; j++) { 
             
             char accessFilename1[MAX_LENGTH]; //first file name
-            char accessFilename2[MAX_LENGTH]; //second file name
-
-            strcpy(accessFilename1, dirPath); //경로를 파일에 복사
-            strcpy(accessFilename2, dirPath); //경로를 파일에 복사
-            strcat(accessFilename1, "/"); 
-            strcat(accessFilename2, "/");
-            strcat(accessFilename1, fileList[i]); //파일 이름을 붙여넣기
-            strcat(accessFilename2, fileList[j]); //파일 이름을 붙여넣기
-            
+            joinPathAndFileName(accessFilename1, dirPath, fileList[i]);
             stat(accessFilename1, &fileStat1); //filestat open
+
+            char accessFilename2[MAX_LENGTH]; //second file name
+            joinPathAndFileName(accessFilename2, dirPath, fileList[j]);
             stat(accessFilename2, &fileStat2); //filestat open
 
             if ((fileStat1.st_size < fileStat2.st_size) && (r_reverse == 0)) { //뒤의 문자열이 더 크다면
@@ -564,16 +626,18 @@ int compareStringUpper(char* fileName1, char* fileName2) {
 // output:                                                                           //
 // purpose: Printing file permissions for user, group, and others.                   //
 ///////////////////////////////////////////////////////////////////////////////////////
-void printPermissions(mode_t mode) {
-    printf((mode & S_IRUSR) ? "r" : "-"); //user-read
-    printf((mode & S_IWUSR) ? "w" : "-"); //user-write
-    printf((mode & S_IXUSR) ? "x" : "-"); //user-execute
-    printf((mode & S_IRGRP) ? "r" : "-"); //group-read
-    printf((mode & S_IWGRP) ? "w" : "-"); //group-write
-    printf((mode & S_IXGRP) ? "x" : "-"); //group-execute
-    printf((mode & S_IROTH) ? "r" : "-"); //other-read
-    printf((mode & S_IWOTH) ? "w" : "-"); //other-write
-    printf((mode & S_IXOTH) ? "x" : "-"); //other-execute
+void printPermissions(mode_t mode, FILE *file) {
+    fprintf(file, "%c", (mode & S_IRUSR) ? 'r' : '-'); //user-read
+    fprintf(file, "%c", (mode & S_IWUSR) ? 'w' : '-'); //user-write
+    fprintf(file, "%c", (mode & S_IXUSR) ? 'x' : '-'); //user-execute
+    fprintf(file, "%c", (mode & S_IRGRP) ? 'r' : '-'); //group-read
+    fprintf(file, "%c", (mode & S_IWGRP) ? 'w' : '-'); //group-write
+    fprintf(file, "%c", (mode & S_IXGRP) ? 'x' : '-'); //group-execute
+    fprintf(file, "%c", (mode & S_IROTH) ? 'r' : '-'); //other-read
+    fprintf(file, "%c", (mode & S_IWOTH) ? 'w' : '-'); //other-write
+    fprintf(file, "%c", (mode & S_IXOTH) ? 'x' : '-'); //other-execute
+
+    fprintf(file, "</td>");
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -584,32 +648,44 @@ void printPermissions(mode_t mode) {
 // output:                                                                           //
 // purpose: Printing file type(regular file, directory, symbolic link, etc.)         //
 ///////////////////////////////////////////////////////////////////////////////////////
-void printType(struct stat fileStat) {
+void printType(struct stat fileStat, FILE *file) {
+
+    fprintf(file, "<td>");
 
     switch (fileStat.st_mode & __S_IFMT) {
     case __S_IFREG: //regular file
-        printf("-");
+        fprintf(file, "-");
         break;
     case __S_IFDIR: //directory
-        printf("d");
+        fprintf(file, "d");
         break;
     case __S_IFLNK: //symbolic link
-        printf("l");
+        fprintf(file, "l");
         break;
     case __S_IFSOCK: //socket
-        printf("s");
+        fprintf(file, "s");
         break;
     case __S_IFIFO: //FIFO(named pipe)
-        printf("p");
+        fprintf(file, "p");
         break;
     case __S_IFCHR: //character device
-        printf("c");
+        fprintf(file, "c");
         break;
     case __S_IFBLK: //block device
-        printf("b");
+        fprintf(file, "b");
         break;
     default:
-        printf("?"); //unknown
+        fprintf(file, "?"); //unknown
         break;
     }
+}
+
+void findColor(struct stat fileStat, char* color) {
+
+    if ((fileStat.st_mode & __S_IFMT) == __S_IFDIR)
+        strcpy(color, "color: Blue");
+    else if ((fileStat.st_mode & __S_IFMT) == __S_IFLNK)
+        strcpy(color, "color: Green");
+    else
+        strcpy(color, "color: Red");
 }
